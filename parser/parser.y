@@ -541,7 +541,7 @@ func newTableFunctionExpr(expr *FuncExpr, withOrdinality BoolVal, as Ident, colu
 %type <constraintOpts> trigger_deferrable_opt
 %type <transitionTables> trigger_referencing
 %type <str> trigger_for_each_opt trigger_exec_keyword
-%type <empty> trigger_old_kw trigger_referencing_kw
+%type <empty> trigger_old_kw trigger_referencing_kw unlogged_kw
 %type <fkDeferOpts> fk_defer_opts
 %type <domainConstraints> domain_constraints_opt domain_constraint
 %type <functionArgs> function_args_opt function_args
@@ -3591,6 +3591,21 @@ create_table_prefix:
   {
     $$ = &DDL{Action: CreateTable, NewName: $4}
     setDDL(yylex, $$)
+  }
+| CREATE unlogged_kw TABLE if_not_exists_opt table_name
+  {
+    $$ = &DDL{Action: CreateTable, NewName: $5, Unlogged: true}
+    setDDL(yylex, $$)
+  }
+
+// UNLOGGED is matched as an identifier for the same reason as REFERENCING (see trigger_referencing_kw).
+unlogged_kw:
+  ID
+  {
+    if $1.Quoted || !strings.EqualFold($1.Name, "unlogged") {
+      return abortParse(yylex, "syntax error")
+    }
+    $$ = struct{}{}
   }
 
 table_spec:

@@ -285,8 +285,9 @@ func (p PostgresParser) parseCreateStmt(stmt *pgquery.CreateStmt) (parser.Statem
 	}
 
 	return &parser.DDL{
-		Action:  parser.CreateTable,
-		NewName: tableName,
+		Action:   parser.CreateTable,
+		NewName:  tableName,
+		Unlogged: stmt.Relation.Relpersistence == "u",
 		TableSpec: &parser.TableSpec{
 			Columns:     columns,
 			Indexes:     indexes,

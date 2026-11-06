@@ -526,6 +526,7 @@ type DDL struct {
 	NewName       TableName
 	IfExists      bool
 	IfNotExists   bool
+	Unlogged      bool // PostgreSQL CREATE UNLOGGED TABLE
 	TableSpec     *TableSpec
 	PartitionSpec *PartitionSpec
 	PartitionOf   *PartitionOfSpec // PostgreSQL PARTITION OF clause
@@ -608,13 +609,17 @@ const (
 func (node *DDL) Format(buf *nodeBuffer) {
 	switch node.Action {
 	case CreateTable:
+		buf.Printf("create ")
+		if node.Unlogged {
+			buf.Printf("unlogged ")
+		}
 		if node.PartitionOf != nil {
-			buf.Printf("create table %v partition of %v", node.NewName, node.PartitionOf.ParentTable)
+			buf.Printf("table %v partition of %v", node.NewName, node.PartitionOf.ParentTable)
 			node.PartitionOf.BoundSpec.Format(buf)
 		} else if node.TableSpec == nil {
-			buf.Printf("create table %v", node.NewName)
+			buf.Printf("table %v", node.NewName)
 		} else {
-			buf.Printf("create table %v %v", node.NewName, node.TableSpec)
+			buf.Printf("table %v %v", node.NewName, node.TableSpec)
 		}
 	case CreateView:
 		if node.View.SecurityType != "" {

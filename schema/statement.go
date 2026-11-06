@@ -1101,6 +1101,19 @@ func (a renameIndexAction) render(d dialect) string {
 	return fmt.Sprintf("RENAME INDEX %s TO %s", d.escapeSQLIdent(a.from), d.escapeSQLIdent(a.to))
 }
 
+// setPersistenceAction is PostgreSQL's SET LOGGED / SET UNLOGGED.
+type setPersistenceAction struct {
+	additive
+	unlogged bool
+}
+
+func (a setPersistenceAction) render(dialect) string {
+	if a.unlogged {
+		return "SET UNLOGGED"
+	}
+	return "SET LOGGED"
+}
+
 // disableRowLevelSecurityAction turns row level security off, or stops forcing it on the
 // table owner.
 type disableRowLevelSecurityAction struct {

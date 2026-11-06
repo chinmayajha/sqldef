@@ -219,6 +219,7 @@ type Table struct {
 	partition   *TablePartition // Partition definition (MySQL/MariaDB)
 	rlsEnabled  bool            // PostgreSQL ROW LEVEL SECURITY enabled
 	rlsForced   bool            // PostgreSQL ROW LEVEL SECURITY forced
+	unlogged    bool            // PostgreSQL UNLOGGED table
 	owner       string          // PostgreSQL owner role ("" = not tracked/declared)
 }
 

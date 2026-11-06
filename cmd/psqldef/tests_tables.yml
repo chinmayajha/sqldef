@@ -469,4 +469,90 @@ AddColumnWithIsNotDistinctFromDefault:
   down: |
     ALTER TABLE public.settings DROP COLUMN enabled;
 
+CreateUnloggedTable:
+  legacy_ignore_quotes: false
+  desired: |
+    CREATE UNLOGGED TABLE events (
+      id bigint NOT NULL,
+      payload text
+    );
+
+SetTableUnlogged:
+  legacy_ignore_quotes: false
+  current: |
+    CREATE TABLE events (
+      id bigint NOT NULL,
+      payload text
+    );
+  desired: |
+    CREATE unlogged TABLE events (
+      id bigint NOT NULL,
+      payload text
+    );
+  up: |
+    ALTER TABLE public.events SET UNLOGGED;
+  down: |
+    ALTER TABLE public.events SET LOGGED;
+
+SetTablesUnloggedWithForeignKey:
+  legacy_ignore_quotes: false
+  current: |
+    CREATE TABLE users (
+      id bigint PRIMARY KEY
+    );
+    CREATE TABLE orders (
+      id bigint PRIMARY KEY,
+      user_id bigint REFERENCES users (id)
+    );
+  desired: |
+    CREATE UNLOGGED TABLE users (
+      id bigint PRIMARY KEY
+    );
+    CREATE UNLOGGED TABLE orders (
+      id bigint PRIMARY KEY,
+      user_id bigint REFERENCES users (id)
+    );
+  up: |
+    ALTER TABLE public.orders SET UNLOGGED;
+    ALTER TABLE public.users SET UNLOGGED;
+  down: |
+    ALTER TABLE public.users SET LOGGED;
+    ALTER TABLE public.orders SET LOGGED;
+
+RenameColumnInUnloggedTable:
+  legacy_ignore_quotes: false
+  current: |
+    CREATE UNLOGGED TABLE events (
+      id bigint NOT NULL,
+      payload text
+    );
+  desired: |
+    CREATE UNLOGGED TABLE events (
+      id bigint NOT NULL,
+      body text -- @renamed from=payload
+    );
+  up: |
+    ALTER TABLE public.events RENAME COLUMN payload TO body;
+  down: |
+    ALTER TABLE public.events ADD COLUMN payload text;
+    ALTER TABLE public.events DROP COLUMN body;
+
+RenameUnloggedTable:
+  legacy_ignore_quotes: false
+  current: |
+    CREATE UNLOGGED TABLE old_events (
+      id bigint NOT NULL
+    );
+  desired: |
+    CREATE UNLOGGED TABLE events ( -- @renamed from=old_events
+      id bigint NOT NULL
+    );
+  up: |
+    ALTER TABLE public.old_events RENAME TO events;
+  down: |
+    CREATE UNLOGGED TABLE old_events (
+      id bigint NOT NULL
+    );
+    DROP TABLE public.events;
+
 # GiST index with tstzrange type

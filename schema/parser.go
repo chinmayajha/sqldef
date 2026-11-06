@@ -57,6 +57,10 @@ func parseDDL(mode GeneratorMode, ddl string, stmt parser.Statement, defaultSche
 	case *parser.DDL:
 		if stmt.Action == parser.CreateTable {
 			// Handle PARTITION OF tables differently
+			partitioned := stmt.PartitionOf != nil || (stmt.TableSpec != nil && stmt.TableSpec.Partition != nil)
+			if stmt.Unlogged && (mode != GeneratorModePostgres || partitioned) {
+				return nil, fmt.Errorf("UNLOGGED is only supported on plain PostgreSQL tables, not on partitioned tables or partitions: %s", ddl)
+			}
 			if stmt.PartitionOf != nil {
 				return parsePartitionOf(mode, stmt, defaultSchema, ddl)
 			}
@@ -755,6 +759,7 @@ func parseTable(mode GeneratorMode, stmt *parser.DDL, defaultSchema string, rawD
 		options:     stmt.TableSpec.Options,
 		renamedFrom: tableRenameFrom,
 		partition:   partition,
+		unlogged:    stmt.Unlogged,
 	}, nil
 }
 
@@ -1425,6 +1430,10 @@ func extractTableComment(rawDDL string, mode GeneratorMode) string {
 			// Continue scanning to handle all cases
 		}
 
+		if foundCreate && isUnloggedKeyword(tok, val) {
+			continue
+		}
+
 		// Reset if we found CREATE but next token is not TABLE
 		if foundCreate && tok != parser.TABLE {
 			foundCreate = false
@@ -1432,6 +1441,10 @@ func extractTableComment(rawDDL string, mode GeneratorMode) string {
 	}
 
 	return firstComment
+}
+
+func isUnloggedKeyword(tok int, val string) bool {
+	return tok == parser.ID && strings.EqualFold(val, "unlogged")
 }
 
 // extractColumnComments extracts inline comments (-- comments) from a CREATE TABLE statement
@@ -1466,6 +1479,10 @@ func extractColumnComments(rawDDL string, mode GeneratorMode) map[string]string 
 			parenDepth = 0
 			currentColumnName = ""
 			expectingColumnDef = false
+			continue
+		}
+
+		if foundCreate && isUnloggedKeyword(tok, val) {
 			continue
 		}
 

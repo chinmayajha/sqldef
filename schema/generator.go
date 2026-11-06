@@ -281,6 +281,7 @@ func (g *Generator) generateDDLs(desiredDDLs []DDL) ([]string, error) {
 	viewDDLs := []statement{}
 	ownerDDLs := []statement{} // Owners must come after CREATE VIEW, which resets them
 	metadataDDLs := []statement{}
+	var persistenceChanges []*Table
 
 	// bulkAlter fuses per-table ALTER TABLE actions when --bulk-alter is set (MySQL only).
 	bulkAlter := newAlterBundler(g, g.config.BulkAlter && g.mode == GeneratorModeMysql)
@@ -348,6 +349,9 @@ func (g *Generator) generateDDLs(desiredDDLs []DDL) ([]string, error) {
 					g.currentTables = append(g.currentTables, &table)
 					g.claimCreatedTablePostgresIndexes(table)
 				}
+			}
+			if t := g.findTableByName(g.currentTables, desired.table.name); g.mode == GeneratorModePostgres && t != nil && t.unlogged != desired.table.unlogged {
+				persistenceChanges = append(persistenceChanges, t)
 			}
 			// Only add to desiredTables if it doesn't already exist (it may have been pre-populated from aggregation)
 			if g.findTableByName(g.desiredTables, desired.table.name) == nil {
@@ -492,6 +496,8 @@ func (g *Generator) generateDDLs(desiredDDLs []DDL) ([]string, error) {
 			return nil, fmt.Errorf("unexpected ddl type in generateDDLs: %v", desired)
 		}
 	}
+
+	interDDLs = append(interDDLs, g.generatePersistenceDDLs(persistenceChanges)...)
 
 	ddls := []statement{}
 	ddls = append(ddls, createExtensionDDLs...)
@@ -7654,6 +7660,51 @@ func isManagedGrantee(config database.GeneratorConfig, grantee string) bool {
 func ruleAllowsDrop(rules []database.ManageObjectRule, name string) bool {
 	rule, matched := matchManageObjectRule(rules, name)
 	return matched && rule.Drop
+}
+
+// generatePersistenceDDLs switches each table between logged and unlogged. PostgreSQL rejects any
+// step that leaves a logged table referencing an unlogged one, so referenced tables become logged
+// first and referencing tables become unlogged first.
+func (g *Generator) generatePersistenceDDLs(tables []*Table) []statement {
+	var toLogged, toUnlogged []*Table
+	for _, table := range tables {
+		if table.unlogged {
+			toLogged = append(toLogged, table)
+		} else {
+			toUnlogged = append(toUnlogged, table)
+		}
+	}
+	var ddls []statement
+	for _, table := range g.sortTablesByForeignKeys(toLogged, true) {
+		ddls = append(ddls, g.alterTable(table.name, setPersistenceAction{unlogged: false}))
+	}
+	for _, table := range g.sortTablesByForeignKeys(toUnlogged, false) {
+		ddls = append(ddls, g.alterTable(table.name, setPersistenceAction{unlogged: true}))
+	}
+	return ddls
+}
+
+// sortTablesByForeignKeys puts referenced tables before the tables referencing them, or after
+// them when referencedFirst is false. It keeps the input order on a cycle.
+func (g *Generator) sortTablesByForeignKeys(tables []*Table, referencedFirst bool) []*Table {
+	dependencies := make(map[string][]string)
+	for _, table := range tables {
+		for _, fk := range table.foreignKeys {
+			if g.qualifiedNamesEqual(table.name, fk.referenceTableName) {
+				continue
+			}
+			referencing, referenced := table.name.RawString(), fk.referenceTableName.RawString()
+			if referencedFirst {
+				dependencies[referencing] = append(dependencies[referencing], referenced)
+			} else {
+				dependencies[referenced] = append(dependencies[referenced], referencing)
+			}
+		}
+	}
+	if sorted := topologicalSort(tables, dependencies, func(t *Table) string { return t.name.RawString() }); len(sorted) != 0 {
+		return sorted
+	}
+	return tables
 }
 
 // generateDropTableDDLsWithDependencies generates DROP TABLE statements in the correct order

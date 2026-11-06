@@ -1030,6 +1030,7 @@ type CheckConstraint struct {
 
 type TableDDLComponents struct {
 	TableName          string
+	Unlogged           bool
 	Columns            []column
 	PrimaryKeyName     string
 	PrimaryKeyCols     []string
@@ -1053,6 +1054,7 @@ func (d *PostgresDatabase) exportTableDDL(table string, cache *TableDDLComponent
 		DefaultSchema: d.GetDefaultSchema(),
 	}
 
+	components.Unlogged = cache.unlogged[table]
 	components.Columns = cache.columns[table]
 	components.PrimaryKeyCols = cache.primaryKeyCols[table]
 	// if pkey cols exist, retrieve the pkey name
@@ -1083,7 +1085,11 @@ func (d *PostgresDatabase) exportTableDDL(table string, cache *TableDDLComponent
 func (d *PostgresDatabase) buildExportTableDDL(components TableDDLComponents) string {
 	var queryBuilder strings.Builder
 	schema, table := splitTableName(components.TableName, components.DefaultSchema)
-	fmt.Fprintf(&queryBuilder, "CREATE TABLE %s.%s (", d.quoteIdentifierIfNeeded(schema), d.quoteIdentifierIfNeeded(table))
+	persistence := ""
+	if components.Unlogged {
+		persistence = "UNLOGGED "
+	}
+	fmt.Fprintf(&queryBuilder, "CREATE %sTABLE %s.%s (", persistence, d.quoteIdentifierIfNeeded(schema), d.quoteIdentifierIfNeeded(table))
 	inlineChecks, tableChecks := splitInlineChecks(components.CheckConstraints)
 	for i, col := range components.Columns {
 		if i > 0 {
@@ -1456,6 +1462,7 @@ func splitTableName(table string, defaultSchema string) (string, string) {
 // TableDDLComponentsCache holds pre-fetched schema data for all tables in a single batch,
 // keyed by qualified table name (schema.table format).
 type TableDDLComponentsCache struct {
+	unlogged          map[string]bool
 	columns           map[string][]column
 	primaryKeyCols    map[string][]string
 	primaryKeyInfos   map[string]primaryKeyInfo
@@ -1472,6 +1479,7 @@ type TableDDLComponentsCache struct {
 
 func (d *PostgresDatabase) buildTableDDLComponentsCache(tableNames []string) (*TableDDLComponentsCache, error) {
 	cache := &TableDDLComponentsCache{
+		unlogged:          make(map[string]bool),
 		columns:           make(map[string][]column),
 		primaryKeyCols:    make(map[string][]string),
 		primaryKeyInfos:   make(map[string]primaryKeyInfo),
@@ -1490,6 +1498,10 @@ func (d *PostgresDatabase) buildTableDDLComponentsCache(tableNames []string) (*T
 	}
 
 	var err error
+	cache.unlogged, err = d.getUnloggedTables(tableNames)
+	if err != nil {
+		return nil, err
+	}
 	cache.columns, err = d.getColumnsForTables(tableNames)
 	if err != nil {
 		return nil, err
@@ -1878,6 +1890,34 @@ func (d *PostgresDatabase) getForeignDefsForTables(tableNames []string) (map[str
 		)
 		tableName := c.tableSchema + "." + c.tableName
 		result[tableName] = append(result[tableName], def)
+	}
+	return result, nil
+}
+
+func (d *PostgresDatabase) getUnloggedTables(tableNames []string) (map[string]bool, error) {
+	const query = `
+		SELECT nsp.nspname || '.' || cls.relname
+		FROM pg_class cls
+		INNER JOIN pg_namespace nsp ON nsp.oid = cls.relnamespace
+		WHERE nsp.nspname || '.' || cls.relname = ANY($1::text[])
+		  AND cls.relpersistence = 'u'
+	`
+	rows, err := d.db.Query(query, pq.Array(tableNames))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]bool)
+	for rows.Next() {
+		var qualifiedTableName string
+		if err := rows.Scan(&qualifiedTableName); err != nil {
+			return nil, err
+		}
+		result[qualifiedTableName] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return result, nil
 }
